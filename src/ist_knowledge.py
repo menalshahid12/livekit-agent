@@ -70,20 +70,15 @@ CHROMA_PERSIST_DIR = DATA_DIR / "chroma_db"
 # Global vector store (populated only if chromadb is available)
 _vector_collection = None
 _docs_list: List["ISTDocument"] = []
-
-SKIP_VECTOR = os.getenv("SKIP_VECTOR_INDEX", "0") == "1"
 _VECTOR_AVAILABLE = False
 
-if SKIP_VECTOR:
-    logger.info("SKIP_VECTOR_INDEX=1 detected. Skipping heavy vector search imports to save memory.")
-else:
-    try:
-        import chromadb
-        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-        _VECTOR_AVAILABLE = True
-        logger.info("ChromaDB + sentence-transformers available → vector search enabled")
-    except ImportError as e:
-        logger.info(f"Vector search disabled (chromadb or sentence-transformers not installed): {e}")
+try:
+    import chromadb
+    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+    _VECTOR_AVAILABLE = True
+    logger.info("ChromaDB + sentence-transformers available → vector search enabled")
+except ImportError as e:
+    logger.info(f"Vector search disabled (chromadb or sentence-transformers not installed): {e}")
 
 
 @dataclass
@@ -250,21 +245,32 @@ def build_vector_index(docs: List[ISTDocument]) -> None:
         _vector_collection = None
 
 
-def simple_keyword_search(query: str, docs: List[ISTDocument], top_k: int = 5) -> List[ISTDocument]:
-    """Fallback keyword-based search when vector is not available"""
+def simple_keyword_search(query: str, docs: List[ISTDocument], top_k: int = 8) -> List[ISTDocument]:
+    """Smarter word-scoring search to catch relevant docs when vector search is off or misses."""
     if not docs or not query:
         return []
 
-    query_lower = query.lower()
-    scored = []
+    # Filter out common filler words
+    stop_words = {"what", "are", "the", "is", "for", "of", "and", "a", "an", "to", "in", "at", "how", "tell", "me"}
+    query_words = [w.strip("?,.") for w in query.lower().split() if w.strip("?,.") not in stop_words and len(w) > 2]
+    
+    if not query_words:
+        query_words = [query.lower()]
 
+    scored = []
     for doc in docs:
+        score = 0
         text_lower = doc.text.lower()
-        score = text_lower.count(query_lower)
+        title_lower = doc.title.lower()
+        for word in query_words:
+            # Title matches are important
+            if word in title_lower: score += 5
+            # Multi-occurrence matches
+            score += text_lower.count(word)
         if score > 0:
             scored.append((score, doc))
 
-    scored.sort(reverse=True)
+    scored.sort(key=lambda x: x[0], reverse=True)
     return [doc for _, doc in scored[:top_k]]
 
 
@@ -299,21 +305,32 @@ def vector_search(query: str, top_k: int = 5) -> List[ISTDocument]:
         return []
 
 
-def search(query: str, docs: Optional[List[ISTDocument]] = None, top_k: int = 5) -> List[ISTDocument]:
-    """Main search entry point: vector if available, else keyword"""
+def search(query: str, docs: Optional[List[ISTDocument]] = None, top_k: int = 8) -> List[ISTDocument]:
+    """Hybrid search: merges Vector results with Keyword results to ensure maximum coverage."""
     if docs is None:
         docs = _docs_list
-
     if not docs:
         return []
 
-    if _vector_collection is not None:
-        hits = vector_search(query, top_k)
-        if hits:
-            return hits
+    results = []
+    seen_urls = set()
 
-    # fallback
-    return simple_keyword_search(query, docs, top_k)
+    # 1. Semantic Vector Search (if available)
+    if _vector_collection is not None:
+        v_results = vector_search(query, top_k=top_k)
+        for d in v_results:
+            if d.url not in seen_urls:
+                results.append(d)
+                seen_urls.add(d.url)
+
+    # 2. Keyword Search (always used as backup or addition)
+    k_results = simple_keyword_search(query, docs, top_k=top_k)
+    for d in k_results:
+        if d.url not in seen_urls:
+            results.append(d)
+            seen_urls.add(d.url)
+
+    return results[:top_k]
 
 
 def build_ist_context(
@@ -344,7 +361,8 @@ def build_ist_context(
     current_length = 0
 
     for doc in results:
-        snippet = f"TITLE: {doc.title}\nURL: {doc.url}\nCONTENT: {doc.text[:900]}"
+        # Give the LLM more content (1200 chars) for better answering
+        snippet = f"TITLE: {doc.title}\nURL: {doc.url}\nCONTENT: {doc.text[:1200]}"
         if current_length + len(snippet) > max_chars:
             break
         snippets.append(snippet)
