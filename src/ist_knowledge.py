@@ -250,36 +250,21 @@ def build_vector_index(docs: List[ISTDocument]) -> None:
         _vector_collection = None
 
 
-def simple_keyword_search(query: str, docs: List[ISTDocument], top_k: int = 10) -> List[ISTDocument]:
-    """Smarter multi-word scoring search (replaces basic exact match)."""
+def simple_keyword_search(query: str, docs: List[ISTDocument], top_k: int = 5) -> List[ISTDocument]:
+    """Fallback keyword-based search when vector is not available"""
     if not docs or not query:
         return []
 
-    # Tokenize query: lower, remove punctuation, split into words
-    stop_words = {"what", "are", "the", "is", "for", "of", "and", "a", "an", "to", "in", "at", "how", "tell", "me", "about", "your", "its", "it"}
-    query_words = [w.strip("?,.!") for w in query.lower().split() if w.strip("?,.!") not in stop_words and len(w) > 2]
-    
-    if not query_words:
-        # If all words were stop words, use the whole query minus punctuation
-        query_words = [query.lower().strip("?,.!")]
-
+    query_lower = query.lower()
     scored = []
+
     for doc in docs:
-        score = 0
         text_lower = doc.text.lower()
-        title_lower = doc.title.lower()
-        
-        for word in query_words:
-            # Title matches are weighted 5x
-            if word in title_lower:
-                score += 10
-            # Body matches
-            score += text_lower.count(word)
-            
+        score = text_lower.count(query_lower)
         if score > 0:
             scored.append((score, doc))
 
-    scored.sort(key=lambda x: x[0], reverse=True)
+    scored.sort(reverse=True)
     return [doc for _, doc in scored[:top_k]]
 
 
@@ -359,8 +344,7 @@ def build_ist_context(
     current_length = 0
 
     for doc in results:
-        # Increased snippet size to 1200 for better LLM grounding
-        snippet = f"TITLE: {doc.title}\nURL: {doc.url}\nCONTENT: {doc.text[:1200]}"
+        snippet = f"TITLE: {doc.title}\nURL: {doc.url}\nCONTENT: {doc.text[:900]}"
         if current_length + len(snippet) > max_chars:
             break
         snippets.append(snippet)
