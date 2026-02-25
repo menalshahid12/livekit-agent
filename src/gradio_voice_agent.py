@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from groq import Groq
 
 # Local module in the same src/ directory
-from ist_knowledge import ISTDocument, load_ist_corpus, simple_search
+from ist_knowledge import ISTDocument, load_ist_corpus, search, is_yes_no_question
 
 
 logger = logging.getLogger("gradio_voice_agent")
@@ -103,7 +103,7 @@ def transcribe_audio(audio_path: str) -> str:
 
 def build_ist_context(query: str, max_chars: int = 1500) -> str:
     """Retrieve relevant IST snippets to ground the LLM."""
-    docs = simple_search(query, IST_DOCS, top_k=5)
+    docs = search(query, IST_DOCS, top_k=5)
     if not docs:
         return "No highly relevant IST website content was found for this question."
 
@@ -127,6 +127,14 @@ def counselor_llm_response(user_text: str) -> str:
 
     # If we couldn't find relevant IST content, escalate to a human counselor
     if ist_context.startswith("No highly relevant IST website content was found"):
+        # Try a lightweight yes/no heuristic before escalating
+        if is_yes_no_question(user_text):
+            hits = search(user_text, IST_DOCS, top_k=3)
+            if hits:
+                snippet = hits[0].text[:300].strip()
+                return f"Yes. Based on IST content: {snippet}"
+            else:
+                return "I don't have enough information in the IST documents to answer that with confidence. " + HUMAN_ESCALATION_MESSAGE
         return HUMAN_ESCALATION_MESSAGE
 
     if not GROQ_AVAILABLE:

@@ -1,0 +1,29 @@
+services:
+  # AI Calling Agent Web Service
+  - type: web
+    name: ai-calling-agent
+    env: python
+    plan: free
+    buildCommand: pip install -r render_requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 ai_calling_agent:app
+    healthCheckPath: /
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    autoDeploy: true
+    
+  # Background Worker for Processing
+  - type: worker
+    name: ai-worker
+    env: python
+    plan: free
+    buildCommand: pip install -r render_requirements.txt
+    startCommand: python ai_calling_agent.py
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    autoDeploy: true

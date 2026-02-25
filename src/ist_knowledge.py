@@ -34,6 +34,19 @@ def _data_dir() -> Path:
 
 DATA_DIR = _data_dir()
 
+
+def get_data_dir_status() -> dict:
+    """Return diagnostic info about the data directory (used by web_call_app debug endpoint)."""
+    fee_path = DATA_DIR / "FEE_STRUCTURE.txt"
+    manual_path = DATA_DIR / "IST_FULL_WEBSITE_MANUAL.txt"
+    return {
+        "data_dir": str(DATA_DIR),
+        "data_dir_exists": DATA_DIR.exists(),
+        "fee_structure_exists": fee_path.exists(),
+        "manual_exists": manual_path.exists(),
+    }
+
+
 # Main files
 MASTER_JSON_PATH          = DATA_DIR / "99_MASTER_JSON.json"
 FEE_STRUCTURE_PATH        = DATA_DIR / "FEE_STRUCTURE.txt"
@@ -333,3 +346,68 @@ def build_ist_context(
         current_length += len(snippet)
 
     return "\n\n".join(snippets)
+
+
+def is_yes_no_question(text: str) -> bool:
+    """Heuristic to detect simple yes/no questions.
+
+    This is intentionally lightweight: checks if the first token is a
+    common auxiliary verb used in yes/no questions.
+    """
+    if not text:
+        return False
+    text = text.strip().lower()
+    tokens = text.split()
+    if not tokens:
+        return False
+    starters = {
+        "is", "are", "was", "were", "do", "does", "did",
+        "can", "could", "would", "will", "shall", "should",
+        "has", "have", "had"
+    }
+    return tokens[0] in starters
+
+
+def init_knowledge(background_build: bool = True) -> List[ISTDocument]:
+    """Load corpus and (optionally) ensure a vector index is available.
+
+    If ChromaDB is available we will try to build the vector index. If a
+    persistent `chroma_db` directory already exists we build synchronously;
+    otherwise we optionally spawn a background thread to build so startup is
+    fast on constrained hosts (e.g. Render free tier).
+    """
+    docs = load_ist_corpus()
+
+    if not _VECTOR_AVAILABLE:
+        logger.info("Vector search not available; skipping index build")
+        return docs
+
+    try:
+        # Ensure persist dir exists
+        CHROMA_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+        # If there's already content in the chroma folder, build now (blocking)
+        if any(CHROMA_PERSIST_DIR.iterdir()):
+            logger.info("Existing Chroma DB detected; building vector index now")
+            build_vector_index(docs)
+        elif background_build:
+            logger.info("No Chroma DB found; starting background vector index builder")
+            import threading
+
+            t = threading.Thread(target=build_vector_index, args=(docs,), daemon=True)
+            t.start()
+        else:
+            logger.info("Skipping vector build at startup (background_build=False)")
+    except Exception as e:
+        logger.warning(f"Failed to initialize vector index: {e}")
+
+    return docs
+
+
+# Initialize documents and attempt vector index build on import so web/agent
+# code has a predictable fallback even when Chroma isn't present on deploy.
+try:
+    _docs_list = load_ist_corpus()
+    # start background indexer if possible
+    init_knowledge(background_build=True)
+except Exception as e:
+    logger.warning(f"IST knowledge initialization failed: {e}")

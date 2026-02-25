@@ -3,6 +3,7 @@ services:
     name: ist-voice-agent
     runtime: docker
     dockerfilePath: ./Dockerfile
+    plan: starter
     healthCheckPath: /health
     envVars:
       - key: GROQ_API_KEY

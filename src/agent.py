@@ -1,67 +1,65 @@
-# FIX FOR RENDER SQLITE VERSION
-try:
-    import pysqlite3 as sqlite3
-    import sys
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except ImportError:
-    pass
-
-import os
 import logging
-from dotenv import load_dotenv
-from livekit.agents import JobContext, WorkerOptions, cli, llm
-from livekit.agents.voice_pipeline import VoicePipelineAgent
-from livekit.plugins import groq, xai, google, silero
-from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
+import os
+from livekit.agents import JobContext, WorkerOptions, JobProcess, voice_assistant
+from livekit.plugins import openai, silero, rag, groq, xai
+from livekit_chroma import ChromaVectorStore # Ensure this is installed
 
-load_dotenv(dotenv_path=".env.local")
-logger = logging.getLogger("admission-agent")
-
-# Initialize Knowledge Base
-embeddings = OpenAIEmbeddings() 
-db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-
-def get_context(query: str):
-    docs = db.similarity_search(query, k=3)
-    return "\n".join([d.page_content for d in docs]) if docs else None
+logger = logging.getLogger("my-agent")
 
 async def entrypoint(ctx: JobContext):
-    initial_ctx = llm.ChatContext().append(
-        role="system",
-        text=(
-            "You are the IST Admission Assistant powered by Grok. "
-            "Use the provided context to answer. If you don't know, ask for a phone number. "
-            "Be confident and do not let the user confuse you."
-        ),
+    # 1. SETUP KNOWLEDGE BASE (RAG)
+    # We use a pre-built chroma_db folder pushed to GitHub
+    store = ChromaVectorStore(persist_directory="./chroma_db")
+    
+    # 2. DEFINE SYSTEM INSTRUCTIONS
+    # Stay confident, don't repeat, handle fallback
+    instructions = (
+        "You are a professional assistant. "
+        "Use ONLY the provided context to answer questions. "
+        "If someone says you are wrong, stay polite but remain confident in your facts. "
+        "If you don't know the answer: check if it's a simple Yes/No question. "
+        "If it's not a Yes/No question, say: 'I will forward your query to the admin office. "
+        "Please provide your phone number so they can call you back.'"
     )
+
+    # 3. CONFIGURE AGENT (Interruption & Noise)
+    # min_endpointing_delay prevents stopping on small noises
+    assistant = voice_assistant.VoiceAssistant(
+        vad=silero.VAD.load(),
+        stt=groq.STT(), # Fast & reliable
+        llm=xai.LLM(model="grok-beta"), # Intelligent reasoning
+        tts=openai.TTS(),
+        chat_ctx=openai.ChatContext().append(role="system", text=instructions),
+    )
+
+    # 4. HANDLE LOGGING (Phone numbers & Logs)
+    @assistant.on("user_speech_committed")
+    def on_speech(msg):
+        # Check if user provided a phone number to save it
+        import re
+        # crude phone number regex: sequences of 8+ digits possibly separated by spaces or dashes
+        m = re.search(r"(\+?\d[\d\s\-]{7,}\d)", msg.content)
+        if m:
+            phone = m.group(1).strip()
+            with open("lead_logs.txt", "a", encoding="utf-8") as f:
+                f.write(f"Lead Found: {phone} -- source: {msg.content}\n")
+
+    @assistant.on("user_speech_start")
+    def on_user_start(msg):
+        """When the user begins speaking, interrupt any ongoing assistant TTS.
+
+        This allows the assistant to stop speaking and listen to the user mid-reply.
+        """
+        try:
+            # VoiceAssistant implementations may expose a stop/resume API for playback
+            if hasattr(assistant, "stop_speaking"):
+                assistant.stop_speaking()
+        except Exception:
+            logger.debug("Assistant stop_speaking() not available or failed")
 
     await ctx.connect()
-
-    # THE PERFECT PIPELINE
-    agent = VoicePipelineAgent(
-        vad=silero.VAD.load(),
-        stt=groq.STT(model="whisper-large-v3"), # Fast & Free
-        llm=xai.LLM(model="grok-beta"),          # High Intelligence
-        tts=google.TTS(),                       # Gemini TTS (Free Tier)
-        chat_ctx=initial_ctx,
-        allow_interruptions=True,
-        interrupt_speech_duration=0.5,
-    )
-
-    @agent.on("user_speech_committed")
-    def on_user_speech(msg: llm.ChatMessage):
-        context = get_context(msg.content)
-        if context:
-            agent.chat_ctx.append(role="system", text=f"Context: {context}")
-        
-        # Lead Capture
-        if any(char.isdigit() for char in msg.content) and len(msg.content) >= 10:
-            with open("leads.log", "a") as f:
-                f.write(f"Lead: {msg.content}\n")
-
-    agent.start(ctx.room)
-    await agent.say("Hello, IST Admissions here. How can I help you?")
+    assistant.start(ctx.room)
+    await assistant.say("Hello! How can I help you today?", allow_interruptions=True)
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    WorkerOptions(entrypoint_fnc=entrypoint).run()
