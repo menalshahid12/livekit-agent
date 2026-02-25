@@ -70,15 +70,20 @@ CHROMA_PERSIST_DIR = DATA_DIR / "chroma_db"
 # Global vector store (populated only if chromadb is available)
 _vector_collection = None
 _docs_list: List["ISTDocument"] = []
+
+SKIP_VECTOR = os.getenv("SKIP_VECTOR_INDEX", "0") == "1"
 _VECTOR_AVAILABLE = False
 
-try:
-    import chromadb
-    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-    _VECTOR_AVAILABLE = True
-    logger.info("ChromaDB + sentence-transformers available → vector search enabled")
-except ImportError as e:
-    logger.info(f"Vector search disabled (chromadb or sentence-transformers not installed): {e}")
+if SKIP_VECTOR:
+    logger.info("SKIP_VECTOR_INDEX=1 detected. Skipping heavy vector search imports to save memory.")
+else:
+    try:
+        import chromadb
+        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+        _VECTOR_AVAILABLE = True
+        logger.info("ChromaDB + sentence-transformers available → vector search enabled")
+    except ImportError as e:
+        logger.info(f"Vector search disabled (chromadb or sentence-transformers not installed): {e}")
 
 
 @dataclass
