@@ -32,5 +32,5 @@ ENV SKIP_VECTOR_INDEX=1
 
 EXPOSE 8000
 
-# Run the Flask web_call_app with gunicorn (1 worker + 6 threads for concurrent calls)
-CMD ["gunicorn", "-w", "1", "--threads", "6", "-b", "0.0.0.0:8000", "--timeout", "120", "--chdir", "src", "web_call_app:app"]
+# Render sets PORT at runtime; use it so health checks and routing work
+CMD ["sh", "-c", "exec gunicorn -w 1 --threads 6 -b 0.0.0.0:${PORT:-8000} --timeout 120 --chdir src web_call_app:app"]

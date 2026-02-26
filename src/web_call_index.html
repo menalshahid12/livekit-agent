@@ -313,8 +313,9 @@
     }
 
     function playReplyWithBargeIn(replyUrl) {
-      const BARGE_IN_THRESHOLD = 0.26;
-      const BARGE_IN_MS = 320;
+      // Higher threshold so we stop only on clear speech, not background noise
+      const BARGE_IN_THRESHOLD = 0.38;
+      const BARGE_IN_MS = 400;
       return new Promise((resolve, reject) => {
         const audio = new Audio(replyUrl);
         let bargeInStream = null;

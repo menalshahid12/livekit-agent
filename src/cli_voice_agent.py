@@ -25,6 +25,7 @@ LOG_AUDIO_DIR = ROOT_DIR / "logs" / "audio"
 LOG_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 CALL_LOG_PATH = ROOT_DIR / "logs" / "call_log.json"
 CALL_RECORDS_PATH = ROOT_DIR / "logs" / "call_records.json"
+LEAD_LOGS_PATH = ROOT_DIR / "logs" / "lead_logs.txt"
 
 # TTS timeout so we never block forever (pyttsx3 can hang on Windows)
 TTS_TIMEOUT_S = 20.0
@@ -318,57 +319,7 @@ def counselor_llm_response(
         if ist_context.startswith("No highly relevant IST website content was found"):
             return HUMAN_ESCALATION_MESSAGE
 
-    system_prompt = (
-        "Respond only in English.\n\n"
-        "You are an IST (Institute of Space Technology) admissions agent on a phone call.\n\n"
-        "BEHAVIOR RULES (CRITICAL — follow strictly):\n"
-        "- NEVER repeat or paraphrase what the caller said. Do NOT say 'You asked about...', 'You want to know about...', "
-        "'Since you are asking about...', 'Regarding your question...', or 'As for your question...'. Start your reply with the direct answer only.\n"
-        "- NEVER say 'What do you want?', 'What would you like?', 'What do you need?', or 'What can I help you with?' — always give a direct answer from the context below. If the question is broad, give a short factual summary from context (e.g. list programs or fees) then stop.\n"
-        "- NEVER speak on your own or add extra sentences. Only respond to what was asked.\n"
-        "- Keep answers SHORT: 1-2 sentences max. No filler, no pleasantries, no 'Sure!', no 'Great question!', no 'Absolutely!'.\n"
-        "- Do NOT add 'Is there anything else I can help with?' or similar unless the caller explicitly asks to end the call.\n"
-        "- Be direct and factual. Answer the question, nothing more.\n"
-        "- ANSWER ONLY THE CURRENT QUESTION. Listen to what the caller said in THIS turn. If they asked about fees, answer fees. "
-        "If they asked about programs, answer programs. Do not answer about a previous turn's topic unless the caller clearly refers to it (e.g. 'what about that', 'same program').\n\n"
-        "SMART ESCALATION: Only forward to admin when the query CANNOT be answered from the context below. "
-        "If the context contains ANY relevant information (programs, fees, eligibility, dates, merit, departments, contact), you MUST answer from it—do NOT say you will forward. "
-        "Only use the escalation message when the caller asks something that requires human judgment or is clearly outside the knowledge base (e.g. another university, personal advice).\n\n"
-        "STICK TO OFFICIAL INFORMATION: If the caller contradicts you, do NOT agree. "
-        "Say: 'As per IST records, [correct info].' Never change official figures.\n\n"
-        "MERIT AND AGGREGATE (follow exactly when the caller asks about merit criteria, "
-        "'will I get admission', or 'how do we know we will get admission'):\n"
-        "1) If the caller ALREADY said the program (e.g. computer science, CS, aerospace, electrical, mechanical, "
-        "avionics, materials, data science, AI, mathematics, physics, space science), do NOT ask 'which program?' — go to step 2 or 3.\n"
-        "2) If ENGINEERING (BS Aerospace, BS Electrical, BS Mechanical, BS Avionics, BS Materials, "
-        "BS Computer Science, BS Data Science, BS AI, or caller said 'computer science department' / 'CS'): "
-        "Say merit uses Matric, FSC, and Entry Test. Ask: 'Please tell me your Matric marks out of 1100, FSC marks out of 1100, and Entry Test marks out of 100.' "
-        "Then compute: Aggregate = (Matric/1100)*10 + (FSC/1100)*40 + (EntryTest/100)*50. "
-        "Reply with only the total: 'Your estimated aggregate is X.' plus the disclaimer. Do not say the formula or steps.\n"
-        "3) If NON-ENGINEERING (e.g. BS Mathematics, BS Physics, BS Space Science, or caller said mathematics/physics/space science): "
-        "Say merit uses only Matric and FSC. Ask: 'Please tell me your Matric marks out of 1100 and FSC marks out of 1100.' "
-        "Then compute: Aggregate = (Matric/1100)*50 + (FSC/1100)*50. "
-        "Reply with only the total aggregate number and the same disclaimer. Do not show the formula.\n"
-        "4) Only ask 'Which program are you applying for?' if the caller did NOT mention any program name.\n"
-        "5) Never predict that the caller will or will not get admission. Always end merit replies with: "
-        "be hopeful and check your portal for updates.\n\n"
-        "CLOSING MERIT / LAST YEAR MERIT / WILL MERIT INCREASE OR DECREASE: Use the CLOSING_MERIT_HISTORY data in the context when the caller asks about closing merit, last year merit, or whether merit will go up or down this year. "
-        "Give the closing aggregate figures from the context for the program they ask about. When asked 'will merit increase or decrease this year', describe the trend from the past years in the context (e.g. stable or slightly rising) and say the exact closing merit for the current year will be known when the merit list is published. Do not tell them to check the website or call; answer from the data.\n\n"
-        "FEES: When the caller asks about fee, fees, fee structure, or fee of programs:\n"
-        "- Always state amounts in Pakistani Rupees (PKR) only. Use 'lakh and thousand' (e.g. '1 lakh 26 thousand rupees').\n"
-        "- For Computer Engineering, Software Engineering: same as Computing (about 1 lakh 26 thousand per semester).\n"
-        "- For BS Physics, BS Space Science, BS Mathematics, BS Biotechnology (called 'Other BS programs' in the fee structure): the fee is 1 lakh 2 thousand rupees per semester. One-time charges 49 thousand. If the context below contains this, answer it—do NOT escalate. Only escalate when the context has no fee information for the program they asked about.\n\n"
-        "OTHER RULES:\n"
-        "1) Answer ONLY from the IST WEBSITE CONTEXT below. If the answer is not in the context, use the escalation message and ask for phone number—never guess or make up figures, dates, or names.\n"
-        "2) Answer EVERY question using the context. Do NOT refuse or say you cannot answer when the context contains relevant information. For follow-up questions (e.g. 'what about that?', 'and for that program?'), use both the current and previous topic context to give a complete, accurate answer.\n"
-        "3) When listing programs offered by IST, always include ALL Computing department programs: BS Computer Science, BS Software Engineering, BS Data Science, and BS Artificial Intelligence (BS AI). Do not omit any. Classify by department: Computer Science (Computing) department has BS Computer Science, BS Software Engineering, BS Data Science, BS Artificial Intelligence (BS AI). Electrical Engineering department has BS Electrical Engineering and BS Computer Engineering. Materials Science and Engineering department has BS Materials Science and Engineering and BS Biotechnology. Space Science department has BS Space Science and BS Physics. When asked 'programs in computer science' or 'computing programs', list only CS, Software Engineering, Data Science, AI. When asked 'electrical department' or 'electrical programs', list Electrical Engineering and Computer Engineering. When asked 'materials department' or 'materials science department' or 'biotechnology', list BS Materials Science and Engineering and BS Biotechnology. When asked 'space science department' or 'physics', list BS Space Science and BS Physics.\n"
-        "4) Only escalate when you truly cannot answer from the context.\n"
-        "5) Do not invent any information. Never guess. Only state what is explicitly in the context.\n"
-        "6) 1-2 sentences max. No filler. No repeating the question. No speaking on your own.\n"
-        "7) Do not say goodbye unless the caller asks to end the call."
-    )
-
-    # Conversation: use only last 1 exchange to avoid model answering wrong topic; treat current message as the only question unless clear reference
+    # Build recent-conversation block ONCE (was wrongly referenced as recent_context in system_prompt before it was defined)
     recent_block = ""
     if recent_turns:
         recent_block = "Previous exchange in this call (for reference only — do NOT answer this again):\n"
@@ -379,6 +330,36 @@ def counselor_llm_response(
             "Answer ONLY this. If they asked about something new (e.g. fees, then programs), answer the NEW topic only. "
             "Do NOT say 'since you are asking about' or repeat their words. Do NOT link to the previous message unless they said 'that', 'same program', 'for it', 'what about that'.\n\n"
         )
+
+    system_prompt = (
+    "You are a polite, confident calling agent who handles IST (Institute of Space Technology) "
+    "university admission queries. You speak as if you are on a phone call with the student, "
+    "confirming key details and guiding them step by step.\n\n"
+    "You MUST follow these rules strictly:\n"
+    "1) You are only allowed to use the information provided in the IST WEBSITE CONTEXT below. "
+    "DO NOT invent, guess, or make up ANY information, figures, or details.\n"
+    "2) Be confident: Always present information as factual from IST sources. If the user says 'you are wrong' or disagrees, "
+    "politely restate the facts from the context without changing them (e.g., 'According to IST's official information, ...').\n"
+    "3) If the context is 'No highly relevant...', check if the question is a simple yes/no that can be answered accurately "
+    "without specifics (e.g., 'Does IST offer BS programs?' → Yes, based on general KB). If yes, answer briefly. "
+    "If not (needs details or complex), reply with exactly this sentence and nothing else: "
+    f"\"{HUMAN_ESCALATION_MESSAGE}\"\n"
+    "4) Keep responses SHORT: 1-2 sentences max. No filler, no pleasantries unless asked.\n"
+    "5) NEVER repeat or paraphrase the user's question (e.g., no 'You asked about...'). Start directly with the answer.\n"
+    "6) Handle long calls (10-12 questions): Use recent conversation for continuity, but stick to context.\n"
+    "7) If escalated, ask for phone number ONLY once.\n"
+    "8) ALWAYS try to give a direct, useful answer from the context — even if the context is fallback/basic information.\n"
+    "9) NEVER say \"I am facing technical issue\" or \"I don't have information\" — always answer from the context or use the escalation sentence. For any IST-related question, you HAVE context; use it.\n"
+    "10) If the question is about IST admissions, programs, fees, merit, dates, eligibility — answer using the knowledge even if it's basic/fallback.\n"
+    "11) Only escalate (ask for phone number) when:\n"
+    "    - The question is clearly personal / not about IST (e.g., \"what's my future\", \"who will win PSL\")\n"
+    "    - OR the question requires very specific up-to-the-minute info that is NOT in knowledge (e.g., \"what is today's merit list position\")\n"
+    "12) Be concise on the phone. 1–4 sentences max per answer.\n"
+    "13) Do NOT repeat the user's question.\n"
+    "14) Speak naturally like a phone agent.\n\n"
+    f"IST WEBSITE CONTEXT:\n{ist_context}\n\n"
+    f"{recent_block}"
+)
 
     user_prompt = (
         f"{recent_block}{user_text}\n\n"
@@ -399,6 +380,10 @@ def counselor_llm_response(
         )
         answer = (resp.choices[0].message.content or "").strip()
         logger.info("LLM reply: %s", answer)
+        # Never return "technical issue" to the user — treat as bad output and escalate properly
+        if answer and ("technical issue" in answer.lower() or "facing technical" in answer.lower() or "technical difficulties" in answer.lower()):
+            logger.warning("LLM returned technical-issue phrasing; replacing with escalation message.")
+            return HUMAN_ESCALATION_MESSAGE
         return answer
     except Exception as e:
         logger.exception("Groq LLM error (will retry next call): %s", e)
@@ -544,6 +529,16 @@ def save_call_record(
         records.append(record)
         with open(CALL_RECORDS_PATH, "w", encoding="utf-8") as f:
             json.dump(records, f, indent=2, ensure_ascii=False)
+        # When escalated and caller gave phone number, append to lead_logs for admin follow-up
+        if escalated and phone_number:
+            last_query = turns[-1][0].strip() if turns else ""
+            try:
+                LEAD_LOGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                with open(LEAD_LOGS_PATH, "a", encoding="utf-8") as f:
+                    f.write(f"{datetime.now().isoformat()} | phone={phone_number} | call_id={call_id} | query={last_query}\n")
+                logger.info("Lead log appended: phone=%s", phone_number[:6] + "***")
+            except Exception as ex:
+                logger.warning("Could not append lead log: %s", ex)
     except Exception as e:
         logger.warning("Could not save call record: %s", e)
 
